@@ -1,8 +1,10 @@
 import { Transaction, Budget } from '@/types';
+import { sendInstantNotification } from '@/services/localNotifications';
 
 const STORAGE_KEYS = {
   transactions: 'pesaguard_transactions',
   budgets: 'pesaguard_budgets',
+  budgetAlerts: 'pesaguard_budget_alerts',
 };
 
 // No default budgets — user creates them manually
@@ -32,6 +34,65 @@ function loadBudgets(): Budget[] {
 
 function saveBudgets(budgets: Budget[]) {
   localStorage.setItem(STORAGE_KEYS.budgets, JSON.stringify(budgets));
+}
+
+function loadBudgetAlerts(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.budgetAlerts);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveBudgetAlerts(alerts: Record<string, number>) {
+  localStorage.setItem(STORAGE_KEYS.budgetAlerts, JSON.stringify(alerts));
+}
+
+function isExpenseTransaction(type: Transaction['type']): boolean {
+  return type !== 'received' && type !== 'deposit';
+}
+
+function getMonthPrefix(isoDate: string): string {
+  const dt = new Date(isoDate);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function maybeNotifyBudgetThreshold(txns: Transaction[], tx: Transaction): Promise<void> {
+  if (!isExpenseTransaction(tx.type)) return;
+
+  const budgets = loadBudgets();
+  const budget = budgets.find(b => b.category === tx.category && b.limit > 0);
+  if (!budget) return;
+
+  const monthPrefix = getMonthPrefix(tx.date);
+  const spent = txns
+    .filter(t => t.category === tx.category && t.date.startsWith(monthPrefix) && isExpenseTransaction(t.type))
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const percentageUsed = (spent / budget.limit) * 100;
+  const alertKey = `${monthPrefix}:${tx.category}`;
+  const alerts = loadBudgetAlerts();
+  const previousThreshold = alerts[alertKey] || 0;
+
+  if (percentageUsed >= 100 && previousThreshold < 100) {
+    await sendInstantNotification(
+      'Budget exceeded',
+      `${tx.category} is over budget: KES ${spent.toLocaleString()} / ${budget.limit.toLocaleString()}.`
+    );
+    alerts[alertKey] = 100;
+    saveBudgetAlerts(alerts);
+    return;
+  }
+
+  if (percentageUsed >= 80 && previousThreshold < 80) {
+    await sendInstantNotification(
+      'Budget is running low',
+      `${tx.category} has reached ${Math.round(percentageUsed)}%: KES ${spent.toLocaleString()} / ${budget.limit.toLocaleString()}.`
+    );
+    alerts[alertKey] = 80;
+    saveBudgetAlerts(alerts);
+  }
 }
 
 export const db = {
@@ -65,7 +126,7 @@ export const db = {
     const now = new Date();
     const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     return loadTransactions()
-      .filter(t => t.date.startsWith(monthStart) && t.type !== 'received' && t.type !== 'deposit')
+      .filter(t => t.date.startsWith(monthStart) && isExpenseTransaction(t.type))
       .reduce((sum, t) => sum + t.amount, 0);
   },
 
@@ -92,6 +153,7 @@ export const db = {
     const txns = loadTransactions();
     txns.unshift(tx);
     saveTransactions(txns);
+    await maybeNotifyBudgetThreshold(txns, tx);
   },
 
   async getWeeklySpending(): Promise<{ day: string; amount: number }[]> {
@@ -102,7 +164,7 @@ export const db = {
       const d = new Date(Date.now() - i * 86400000);
       const dateStr = d.toISOString().split('T')[0];
       const amount = transactions
-        .filter(t => t.date.startsWith(dateStr) && t.type !== 'received' && t.type !== 'deposit')
+        .filter(t => t.date.startsWith(dateStr) && isExpenseTransaction(t.type))
         .reduce((sum, t) => sum + t.amount, 0);
       result.push({ day: days[d.getDay()], amount });
     }
