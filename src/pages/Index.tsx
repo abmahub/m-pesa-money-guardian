@@ -26,6 +26,10 @@ const Index = () => {
     setOnboarded(true);
   };
 
+  if (showSplash) {
+    return <SplashScreen onFinish={handleSplashFinish} />;
+  }
+
   if (!onboarded) {
     return <OnboardingScreen onComplete={handleOnboardingComplete} />;
   }
