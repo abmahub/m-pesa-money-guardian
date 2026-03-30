@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { TabType } from '@/types';
 import BottomNav from '@/components/BottomNav';
 import HomeScreen from '@/screens/HomeScreen';
@@ -7,16 +7,19 @@ import BudgetScreen from '@/screens/BudgetScreen';
 import InsightsScreen from '@/screens/InsightsScreen';
 import SettingsScreen from '@/screens/SettingsScreen';
 import OnboardingScreen from '@/screens/OnboardingScreen';
+import SplashScreen from '@/screens/SplashScreen';
 
 const Index = () => {
+  const [showSplash, setShowSplash] = useState(true);
   const [onboarded, setOnboarded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('home');
 
-  // Check if already onboarded
   useEffect(() => {
     const done = localStorage.getItem('pesaguard_onboarded');
     if (done === 'true') setOnboarded(true);
   }, []);
+
+  const handleSplashFinish = useCallback(() => setShowSplash(false), []);
 
   const handleOnboardingComplete = () => {
     localStorage.setItem('pesaguard_onboarded', 'true');
