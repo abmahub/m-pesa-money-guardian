@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus } from 'lucide-react';
-import { TabType } from '@/types';
+import { TabType, Transaction } from '@/types';
 import BottomNav from '@/components/BottomNav';
 import HomeScreen from '@/screens/HomeScreen';
 import TransactionsScreen from '@/screens/TransactionsScreen';
@@ -10,6 +10,7 @@ import SettingsScreen from '@/screens/SettingsScreen';
 import OnboardingScreen from '@/screens/OnboardingScreen';
 import SplashScreen from '@/screens/SplashScreen';
 import AddTransactionModal from '@/components/AddTransactionModal';
+import SmsReceivedPopup from '@/components/SmsReceivedPopup';
 import { smsService } from '@/services/capacitorSms';
 
 const Index = () => {
@@ -18,10 +19,16 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [showAddModal, setShowAddModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [smsTransaction, setSmsTransaction] = useState<Transaction | null>(null);
 
   useEffect(() => {
     const done = localStorage.getItem('pesaguard_onboarded');
     if (done === 'true') setOnboarded(true);
+  }, []);
+
+  const handleSmsReceived = useCallback((tx: Transaction) => {
+    setSmsTransaction(tx);
+    setRefreshKey(k => k + 1);
   }, []);
 
   // Initialize SMS listener on native platform
@@ -30,17 +37,24 @@ const Index = () => {
     let cleanup: (() => void) | null = null;
 
     const init = async () => {
-      if (!smsService.isAvailable()) return;
+      if (!smsService.isAvailable()) {
+        // On web preview, simulate an M-Pesa message after 4 seconds for demo
+        const timer = setTimeout(() => {
+          smsService.simulateIncoming(handleSmsReceived);
+        }, 4000);
+        cleanup = () => clearTimeout(timer);
+        return;
+      }
       const granted = await smsService.requestPermission();
       if (!granted) return;
       await smsService.importExistingMessages();
-      cleanup = await smsService.startListening();
+      cleanup = await smsService.startListening(handleSmsReceived);
       setRefreshKey(k => k + 1);
     };
 
     init();
     return () => { cleanup?.(); };
-  }, [onboarded]);
+  }, [onboarded, handleSmsReceived]);
 
   const handleSplashFinish = useCallback(() => setShowSplash(false), []);
 
@@ -74,6 +88,13 @@ const Index = () => {
       <div className="overflow-y-auto">
         {renderScreen()}
       </div>
+
+      {/* M-Pesa SMS Received Popup */}
+      <SmsReceivedPopup
+        transaction={smsTransaction}
+        onDismiss={() => setSmsTransaction(null)}
+        onView={() => setActiveTab('transactions')}
+      />
 
       {/* Floating Action Button */}
       <button
