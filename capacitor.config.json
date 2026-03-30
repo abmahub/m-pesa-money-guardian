@@ -2,10 +2,6 @@
   "appId": "app.lovable.pesaguard",
   "appName": "PesaGuard",
   "webDir": "dist",
-  "server": {
-    "url": "https://68a12ff9-b99a-44fc-b4cd-42e85268f1bd.lovableproject.com?forceHideBadge=true",
-    "cleartext": true
-  },
   "plugins": {
     "SplashScreen": {
       "launchAutoHide": false,
