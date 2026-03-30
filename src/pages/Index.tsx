@@ -1,16 +1,50 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState, useEffect } from 'react';
+import { TabType } from '@/types';
+import BottomNav from '@/components/BottomNav';
+import HomeScreen from '@/screens/HomeScreen';
+import TransactionsScreen from '@/screens/TransactionsScreen';
+import BudgetScreen from '@/screens/BudgetScreen';
+import InsightsScreen from '@/screens/InsightsScreen';
+import SettingsScreen from '@/screens/SettingsScreen';
+import OnboardingScreen from '@/screens/OnboardingScreen';
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
+const Index = () => {
+  const [onboarded, setOnboarded] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('home');
+
+  // Check if already onboarded
+  useEffect(() => {
+    const done = localStorage.getItem('pesaguard_onboarded');
+    if (done === 'true') setOnboarded(true);
+  }, []);
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('pesaguard_onboarded', 'true');
+    setOnboarded(true);
+  };
+
+  if (!onboarded) {
+    return <OnboardingScreen onComplete={handleOnboardingComplete} />;
+  }
+
+  const renderScreen = () => {
+    switch (activeTab) {
+      case 'home': return <HomeScreen />;
+      case 'transactions': return <TransactionsScreen />;
+      case 'budget': return <BudgetScreen />;
+      case 'insights': return <InsightsScreen />;
+      case 'settings': return <SettingsScreen />;
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
+    <div className="min-h-screen bg-background max-w-lg mx-auto">
+      <div className="overflow-y-auto">
+        {renderScreen()}
+      </div>
+      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );
 };
-
-const Index = PlaceholderIndex;
 
 export default Index;
