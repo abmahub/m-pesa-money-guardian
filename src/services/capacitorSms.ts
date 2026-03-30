@@ -4,7 +4,6 @@
 import { Capacitor } from '@capacitor/core';
 import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
-import { db } from './database';
 
 interface SmsMessage {
   address: string;
@@ -53,7 +52,7 @@ export const smsService = {
     }
   },
 
-  /** Read existing M-Pesa messages from device inbox */
+  /** Read existing M-Pesa messages from device inbox — auto-saves with default category */
   async importExistingMessages(limit = 500): Promise<number> {
     const plugin = getSmsPlugin();
     if (!plugin) return 0;
@@ -63,7 +62,6 @@ export const smsService = {
       let imported = 0;
 
       for (const msg of messages) {
-        // ONLY process messages from M-Pesa sender
         if (!isMpesaMessage(msg.address, msg.body)) continue;
 
         const parsed = parseMpesaSms(msg.body);
@@ -79,8 +77,14 @@ export const smsService = {
           reference: parsed.reference,
         };
 
-        await db.addTransaction(tx);
-        imported++;
+        // Check if already imported
+        const existing = localStorage.getItem('pesaguard_transactions');
+        const txns: Transaction[] = existing ? JSON.parse(existing) : [];
+        if (!txns.some(t => t.id === tx.id)) {
+          txns.unshift(tx);
+          localStorage.setItem('pesaguard_transactions', JSON.stringify(txns));
+          imported++;
+        }
       }
 
       return imported;
@@ -90,31 +94,30 @@ export const smsService = {
     }
   },
 
-  /** Listen for new incoming M-Pesa SMS in real-time */
-  async startListening(onTransaction?: (tx: Transaction) => void): Promise<(() => void) | null> {
+  /** Listen for new incoming M-Pesa SMS in real-time.
+   *  Does NOT auto-save — returns partial tx for user to categorize via popup. */
+  async startListening(onTransaction?: (tx: Omit<Transaction, 'category'>) => void): Promise<(() => void) | null> {
     const plugin = getSmsPlugin();
     if (!plugin) return null;
 
     try {
-      const listener = await plugin.addListener('smsReceived', async ({ address, body }) => {
-        // ONLY process messages from M-Pesa sender
+      const listener = await plugin.addListener('smsReceived', ({ address, body }) => {
         if (!isMpesaMessage(address, body)) return;
 
         const parsed = parseMpesaSms(body);
         if (!parsed) return;
 
-        const tx: Transaction = {
+        // Build partial transaction — no category, user will choose
+        const tx: Omit<Transaction, 'category'> = {
           id: `sms_${Date.now()}`,
           amount: parsed.amount ?? 0,
           type: parsed.type ?? 'sent',
-          category: parsed.category ?? 'Other',
           name: parsed.name ?? 'Unknown',
           date: new Date().toISOString(),
           reference: parsed.reference,
         };
 
-        await db.addTransaction(tx);
-        console.log('[SMS] Imported real transaction:', tx.name, tx.amount);
+        console.log('[SMS] New M-Pesa transaction detected:', tx.name, tx.amount);
         onTransaction?.(tx);
       });
 

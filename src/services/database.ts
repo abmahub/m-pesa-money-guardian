@@ -5,12 +5,8 @@ const STORAGE_KEYS = {
   budgets: 'pesaguard_budgets',
 };
 
-const DEFAULT_BUDGETS: Budget[] = [
-  { id: '1', category: 'Food', limit: 20000, used: 0, icon: '🍴' },
-  { id: '2', category: 'Transport', limit: 8000, used: 0, icon: '🚌' },
-  { id: '3', category: 'Shopping', limit: 15000, used: 0, icon: '🛍️' },
-  { id: '4', category: 'Bills', limit: 10000, used: 0, icon: '📄' },
-];
+// No default budgets — user creates them manually
+const DEFAULT_BUDGETS: Budget[] = [];
 
 function loadTransactions(): Transaction[] {
   try {
