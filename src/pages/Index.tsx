@@ -19,16 +19,16 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [showAddModal, setShowAddModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [smsTransaction, setSmsTransaction] = useState<Transaction | null>(null);
+  const [pendingSmsTransaction, setPendingSmsTransaction] = useState<Omit<Transaction, 'category'> | null>(null);
 
   useEffect(() => {
     const done = localStorage.getItem('pesaguard_onboarded');
     if (done === 'true') setOnboarded(true);
   }, []);
 
-  const handleSmsReceived = useCallback((tx: Transaction) => {
-    setSmsTransaction(tx);
-    setRefreshKey(k => k + 1);
+  /** Called when a new M-Pesa SMS is detected — shows category picker popup */
+  const handleSmsReceived = useCallback((tx: Omit<Transaction, 'category'>) => {
+    setPendingSmsTransaction(tx);
   }, []);
 
   // Initialize real SMS listener on native Android only
@@ -42,17 +42,25 @@ const Index = () => {
     let cleanup: (() => void) | null = null;
 
     const init = async () => {
+      // Request REAL Android system permissions
       const granted = await smsService.requestPermission();
       if (!granted) {
         console.log('[PesaGuard] SMS permission denied');
         return;
       }
+
+      // Import existing M-Pesa messages from inbox
       const imported = await smsService.importExistingMessages();
       if (imported > 0) {
         setRefreshKey(k => k + 1);
         console.log(`[PesaGuard] Imported ${imported} M-Pesa transactions`);
       }
-      cleanup = await smsService.startListening(handleSmsReceived);
+
+      // Listen for new incoming SMS — passes to category picker popup
+      cleanup = await smsService.startListening((tx) => {
+        // Don't auto-save — show popup for user to pick category
+        handleSmsReceived(tx);
+      });
     };
 
     init();
@@ -80,7 +88,7 @@ const Index = () => {
     switch (activeTab) {
       case 'home': return <HomeScreen key={refreshKey} />;
       case 'transactions': return <TransactionsScreen key={refreshKey} />;
-      case 'budget': return <BudgetScreen />;
+      case 'budget': return <BudgetScreen key={refreshKey} />;
       case 'insights': return <InsightsScreen key={refreshKey} />;
       case 'settings': return <SettingsScreen />;
     }
@@ -92,11 +100,14 @@ const Index = () => {
         {renderScreen()}
       </div>
 
-      {/* Real M-Pesa SMS Received Popup — only from real device SMS */}
+      {/* M-Pesa SMS Category Picker Popup — only from real device SMS */}
       <SmsReceivedPopup
-        transaction={smsTransaction}
-        onDismiss={() => setSmsTransaction(null)}
-        onView={() => setActiveTab('transactions')}
+        transaction={pendingSmsTransaction}
+        onDismiss={() => setPendingSmsTransaction(null)}
+        onSaved={() => {
+          setRefreshKey(k => k + 1);
+          setPendingSmsTransaction(null);
+        }}
       />
 
       {/* Floating Action Button */}
