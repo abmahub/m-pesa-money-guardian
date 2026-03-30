@@ -38,6 +38,20 @@ export const smsService = {
     return Capacitor.getPlatform() === 'android';
   },
 
+  /** Check current Android SMS permission state */
+  async checkPermission(): Promise<boolean> {
+    const plugin = getSmsPlugin();
+    if (!plugin?.checkPermission) return false;
+
+    try {
+      const result = await plugin.checkPermission();
+      return result.granted;
+    } catch (err) {
+      console.error('[SMS] Permission check failed:', err);
+      return false;
+    }
+  },
+
   /** Request real Android READ_SMS permission */
   async requestPermission(): Promise<boolean> {
     const plugin = getSmsPlugin();

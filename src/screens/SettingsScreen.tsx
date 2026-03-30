@@ -1,10 +1,24 @@
 import AppHeader from '@/components/AppHeader';
 import { ChevronRight, Download, Shield, MessageSquare, Bell } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { smsService } from '@/services/capacitorSms';
+import { checkNotificationPermission, requestNotificationPermission } from '@/services/localNotifications';
 
 const SettingsScreen = () => {
   const [smsStatus, setSmsStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+  const [notificationStatus, setNotificationStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+
+  useEffect(() => {
+    const checkPermissions = async () => {
+      const smsGranted = await smsService.checkPermission();
+      setSmsStatus(smsGranted ? 'granted' : 'unknown');
+
+      const notificationsGranted = await checkNotificationPermission();
+      setNotificationStatus(notificationsGranted ? 'granted' : 'unknown');
+    };
+
+    checkPermissions();
+  }, []);
 
   const handleRequestSms = async () => {
     if (smsService.isAvailable()) {
@@ -13,6 +27,11 @@ const SettingsScreen = () => {
     } else {
       setSmsStatus('denied');
     }
+  };
+
+  const handleRequestNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    setNotificationStatus(granted ? 'granted' : 'denied');
   };
 
   const handleClearData = () => {
@@ -47,15 +66,18 @@ const SettingsScreen = () => {
             </div>
             <ChevronRight className="w-5 h-5 text-muted-foreground" />
           </button>
-          <div className="flex items-center gap-3 px-4 py-4">
+          <button onClick={handleRequestNotifications} className="flex items-center gap-3 w-full px-4 py-4 text-left">
             <div className="w-10 h-10 rounded-xl bg-accent flex items-center justify-center">
               <Bell className="w-5 h-5 text-accent-foreground" />
             </div>
             <div className="flex-1">
               <p className="font-semibold text-sm text-foreground">Notifications</p>
-              <p className="text-xs text-muted-foreground">Alerts from real M-Pesa transactions only</p>
+              <p className="text-xs text-muted-foreground">
+                {notificationStatus === 'granted' ? 'Access granted ✓' : notificationStatus === 'denied' ? 'Access denied' : 'Tap to request notification access'}
+              </p>
             </div>
-          </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground" />
+          </button>
         </div>
       </div>
 
