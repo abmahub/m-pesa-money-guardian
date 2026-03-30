@@ -31,25 +31,28 @@ const Index = () => {
     setRefreshKey(k => k + 1);
   }, []);
 
-  // Initialize SMS listener on native platform
+  // Initialize real SMS listener on native Android only
   useEffect(() => {
     if (!onboarded) return;
+    if (!smsService.isAvailable()) {
+      console.log('[PesaGuard] Running in web preview — SMS features disabled');
+      return;
+    }
+
     let cleanup: (() => void) | null = null;
 
     const init = async () => {
-      if (!smsService.isAvailable()) {
-        // On web preview, simulate an M-Pesa message after 4 seconds for demo
-        const timer = setTimeout(() => {
-          smsService.simulateIncoming(handleSmsReceived);
-        }, 4000);
-        cleanup = () => clearTimeout(timer);
+      const granted = await smsService.requestPermission();
+      if (!granted) {
+        console.log('[PesaGuard] SMS permission denied');
         return;
       }
-      const granted = await smsService.requestPermission();
-      if (!granted) return;
-      await smsService.importExistingMessages();
+      const imported = await smsService.importExistingMessages();
+      if (imported > 0) {
+        setRefreshKey(k => k + 1);
+        console.log(`[PesaGuard] Imported ${imported} M-Pesa transactions`);
+      }
       cleanup = await smsService.startListening(handleSmsReceived);
-      setRefreshKey(k => k + 1);
     };
 
     init();
@@ -89,7 +92,7 @@ const Index = () => {
         {renderScreen()}
       </div>
 
-      {/* M-Pesa SMS Received Popup */}
+      {/* Real M-Pesa SMS Received Popup — only from real device SMS */}
       <SmsReceivedPopup
         transaction={smsTransaction}
         onDismiss={() => setSmsTransaction(null)}
