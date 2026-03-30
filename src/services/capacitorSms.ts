@@ -94,7 +94,7 @@ export const smsService = {
   },
 
   /** Listen for new incoming M-Pesa SMS in real-time */
-  async startListening(): Promise<(() => void) | null> {
+  async startListening(onTransaction?: (tx: Transaction) => void): Promise<(() => void) | null> {
     const plugin = getSmsPlugin();
     if (!plugin) return null;
 
@@ -117,6 +117,7 @@ export const smsService = {
 
         await db.addTransaction(tx);
         console.log('[SMS] Auto-imported transaction:', tx.name, tx.amount);
+        onTransaction?.(tx);
       });
 
       return () => listener.remove();
@@ -124,5 +125,23 @@ export const smsService = {
       console.error('[SMS] Listener setup failed:', err);
       return null;
     }
+  },
+
+  /** Simulate an incoming M-Pesa SMS (for web preview/testing) */
+  simulateIncoming(onTransaction?: (tx: Transaction) => void): void {
+    const samples = [
+      { amount: 1500, type: 'received' as const, name: 'John Kamau', category: 'Transfer' },
+      { amount: 250, type: 'sent' as const, name: 'Naivas Supermarket', category: 'Food' },
+      { amount: 100, type: 'paybill' as const, name: 'Safaricom', category: 'Bills' },
+      { amount: 2000, type: 'withdraw' as const, name: 'ATM Westlands', category: 'Cash' },
+    ];
+    const sample = samples[Math.floor(Math.random() * samples.length)];
+    const tx: Transaction = {
+      id: `sim_${Date.now()}`,
+      ...sample,
+      date: new Date().toISOString(),
+    };
+    db.addTransaction(tx);
+    onTransaction?.(tx);
   },
 };
