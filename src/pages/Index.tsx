@@ -12,6 +12,7 @@ import SplashScreen from '@/screens/SplashScreen';
 import AddTransactionModal from '@/components/AddTransactionModal';
 import SmsReceivedPopup from '@/components/SmsReceivedPopup';
 import { smsService } from '@/services/capacitorSms';
+import { requestNotificationPermission } from '@/services/localNotifications';
 
 const Index = () => {
   const [showSplash, setShowSplash] = useState(true);
@@ -42,6 +43,12 @@ const Index = () => {
     let cleanup: (() => void) | null = null;
 
     const init = async () => {
+      // Ask Android notification permission for budget alerts
+      const notificationGranted = await requestNotificationPermission();
+      if (!notificationGranted) {
+        console.log('[PesaGuard] Notification permission denied');
+      }
+
       // Request REAL Android system permissions
       const granted = await smsService.requestPermission();
       if (!granted) {
