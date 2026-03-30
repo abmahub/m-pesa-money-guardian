@@ -1,7 +1,7 @@
 // Capacitor SMS Reader Service — PRODUCTION ONLY
 // No simulated/fake messages. Reads real device SMS only.
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
 
@@ -14,20 +14,22 @@ interface SmsMessage {
 
 interface SmsInboxPlugin {
   requestPermission(): Promise<{ granted: boolean }>;
+  checkPermission?: () => Promise<{ granted: boolean }>;
   getMessages(options: { limit: number; offset?: number }): Promise<{ messages: SmsMessage[] }>;
   addListener(event: 'smsReceived', callback: (data: { address: string; body: string }) => void): Promise<{ remove: () => void }>;
 }
 
+const SmsInbox = registerPlugin<SmsInboxPlugin>('SmsInbox');
+
 function getSmsPlugin(): SmsInboxPlugin | null {
-  if (Capacitor.isNativePlatform()) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (Capacitor as any).Plugins?.SmsInbox as SmsInboxPlugin;
-    } catch {
-      return null;
-    }
+  if (Capacitor.getPlatform() !== 'android') return null;
+
+  if (!Capacitor.isPluginAvailable('SmsInbox')) {
+    console.warn('[SMS] SmsInbox plugin is not available on this build');
+    return null;
   }
-  return null;
+
+  return SmsInbox;
 }
 
 export const smsService = {
@@ -40,10 +42,16 @@ export const smsService = {
   async requestPermission(): Promise<boolean> {
     const plugin = getSmsPlugin();
     if (!plugin) {
-      console.log('[SMS] Not on native platform — SMS features unavailable');
+      console.log('[SMS] Not on native Android platform — SMS features unavailable');
       return false;
     }
+
     try {
+      if (plugin.checkPermission) {
+        const current = await plugin.checkPermission();
+        if (current.granted) return true;
+      }
+
       const result = await plugin.requestPermission();
       return result.granted;
     } catch (err) {
