@@ -64,7 +64,7 @@ const Index = () => {
 
     // Check when app resumes from background
     if (shareIntentService.isNative()) {
-      const listener = App.addListener('appStateChange', ({ isActive }) => {
+      const listener = CapApp.addListener('appStateChange', ({ isActive }) => {
         if (isActive) checkSharedContent();
       });
 
