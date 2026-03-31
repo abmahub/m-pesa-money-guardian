@@ -63,9 +63,8 @@ const Index = () => {
         console.log(`[PesaGuard] Imported ${imported} M-Pesa transactions`);
       }
 
-      // Listen for new incoming SMS — passes to category picker popup
-      cleanup = await smsService.startListening((tx) => {
-        // Don't auto-save — show popup for user to pick category
+      // Poll for new incoming SMS — passes to category picker popup
+      cleanup = smsService.startPolling((tx) => {
         handleSmsReceived(tx);
       });
     };
