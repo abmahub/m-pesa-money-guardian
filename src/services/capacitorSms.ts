@@ -1,35 +1,24 @@
-// Capacitor SMS Reader Service — PRODUCTION ONLY
-// No simulated/fake messages. Reads real device SMS only.
+// Capacitor SMS Reader Service — uses capacitor-sms-inbox plugin
+// Reads real M-Pesa SMS from Android device inbox
 
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
 
-interface SmsMessage {
-  address: string;
-  body: string;
-  date: number;
-  type: number;
-}
+// capacitor-sms-inbox plugin — only works on native Android
+let SmsInbox: any = null;
 
-interface SmsInboxPlugin {
-  requestPermission(): Promise<{ granted: boolean }>;
-  checkPermission?: () => Promise<{ granted: boolean }>;
-  getMessages(options: { limit: number; offset?: number }): Promise<{ messages: SmsMessage[] }>;
-  addListener(event: 'smsReceived', callback: (data: { address: string; body: string }) => void): Promise<{ remove: () => void }>;
-}
-
-const SmsInbox = registerPlugin<SmsInboxPlugin>('SmsInbox');
-
-function getSmsPlugin(): SmsInboxPlugin | null {
+async function loadPlugin() {
+  if (SmsInbox) return SmsInbox;
   if (Capacitor.getPlatform() !== 'android') return null;
-
-  if (!Capacitor.isPluginAvailable('SmsInbox')) {
-    console.warn('[SMS] SmsInbox plugin is not available on this build');
+  try {
+    const mod = await import('capacitor-sms-inbox');
+    SmsInbox = mod.SmsInbox || mod.default || mod;
+    return SmsInbox;
+  } catch (err) {
+    console.warn('[SMS] capacitor-sms-inbox plugin not available:', err);
     return null;
   }
-
-  return SmsInbox;
 }
 
 export const smsService = {
@@ -38,77 +27,98 @@ export const smsService = {
     return Capacitor.getPlatform() === 'android';
   },
 
-  /** Check current Android SMS permission state */
+  /** Check current SMS permission status */
   async checkPermission(): Promise<boolean> {
-    const plugin = getSmsPlugin();
-    if (!plugin?.checkPermission) return false;
-
+    const plugin = await loadPlugin();
+    if (!plugin?.checkPermissions) return false;
     try {
-      const result = await plugin.checkPermission();
-      return result.granted;
+      const status = await plugin.checkPermissions();
+      return status?.sms === 'granted' || status?.receive === 'granted';
     } catch (err) {
       console.error('[SMS] Permission check failed:', err);
       return false;
     }
   },
 
-  /** Request real Android READ_SMS permission */
+  /** Request Android READ_SMS + RECEIVE_SMS permission */
   async requestPermission(): Promise<boolean> {
-    const plugin = getSmsPlugin();
+    const plugin = await loadPlugin();
     if (!plugin) {
-      console.log('[SMS] Not on native Android platform — SMS features unavailable');
+      console.log('[SMS] Not on native Android — SMS unavailable');
       return false;
     }
 
     try {
-      if (plugin.checkPermission) {
-        const current = await plugin.checkPermission();
-        if (current.granted) return true;
+      // Check if already granted
+      if (plugin.checkPermissions) {
+        const current = await plugin.checkPermissions();
+        if (current?.sms === 'granted') return true;
       }
 
-      const result = await plugin.requestPermission();
-      return result.granted;
+      // Request permission — triggers Android system dialog
+      const result = await plugin.requestPermissions();
+      console.log('[SMS] Permission result:', result);
+      return result?.sms === 'granted' || result?.receive === 'granted';
     } catch (err) {
       console.error('[SMS] Permission request failed:', err);
       return false;
     }
   },
 
-  /** Read existing M-Pesa messages from device inbox — auto-saves with default category */
+  /** Read existing M-Pesa messages from device inbox and auto-save with parsed category */
   async importExistingMessages(limit = 500): Promise<number> {
-    const plugin = getSmsPlugin();
+    const plugin = await loadPlugin();
     if (!plugin) return 0;
 
     try {
-      const { messages } = await plugin.getMessages({ limit });
+      // Use getSMSList from capacitor-sms-inbox
+      const result = await plugin.getSMSList({
+        filter: {
+          address: 'MPESA',
+          maxCount: limit,
+        },
+      });
+
+      const messages = result?.smsList || result?.messages || [];
       let imported = 0;
 
       for (const msg of messages) {
-        if (!isMpesaMessage(msg.address, msg.body)) continue;
+        const address = msg.address || msg.creator || '';
+        const body = msg.body || '';
+        if (!body || !isMpesaMessage(address, body)) continue;
 
-        const parsed = parseMpesaSms(msg.body);
+        const parsed = parseMpesaSms(body);
         if (!parsed) continue;
 
+        const msgDate = msg.date ? new Date(Number(msg.date)) : new Date();
+        const txId = `sms_${msg.date || Date.now()}_${imported}`;
+
         const tx: Transaction = {
-          id: `sms_${msg.date}`,
+          id: txId,
           amount: parsed.amount ?? 0,
           type: parsed.type ?? 'sent',
           category: parsed.category ?? 'Other',
           name: parsed.name ?? 'Unknown',
-          date: new Date(msg.date).toISOString(),
+          date: msgDate.toISOString(),
           reference: parsed.reference,
         };
 
         // Check if already imported
         const existing = localStorage.getItem('pesaguard_transactions');
         const txns: Transaction[] = existing ? JSON.parse(existing) : [];
-        if (!txns.some(t => t.id === tx.id)) {
+        const isDuplicate = txns.some(t =>
+          t.id === tx.id ||
+          (t.amount === tx.amount && t.name === tx.name && t.date === tx.date)
+        );
+
+        if (!isDuplicate) {
           txns.unshift(tx);
           localStorage.setItem('pesaguard_transactions', JSON.stringify(txns));
           imported++;
         }
       }
 
+      console.log(`[SMS] Imported ${imported} M-Pesa transactions from inbox`);
       return imported;
     } catch (err) {
       console.error('[SMS] Import failed:', err);
@@ -116,37 +126,65 @@ export const smsService = {
     }
   },
 
-  /** Listen for new incoming M-Pesa SMS in real-time.
-   *  Does NOT auto-save — returns partial tx for user to categorize via popup. */
-  async startListening(onTransaction?: (tx: Omit<Transaction, 'category'>) => void): Promise<(() => void) | null> {
-    const plugin = getSmsPlugin();
-    if (!plugin) return null;
+  /** Poll for new SMS periodically (since capacitor-sms-inbox doesn't have a listener).
+   *  Returns cleanup function. Shows popup for user to categorize. */
+  startPolling(onTransaction: (tx: Omit<Transaction, 'category'>) => void, intervalMs = 15000): (() => void) | null {
+    if (!this.isAvailable()) return null;
 
-    try {
-      const listener = await plugin.addListener('smsReceived', ({ address, body }) => {
-        if (!isMpesaMessage(address, body)) return;
+    let lastCheckedTimestamp = Date.now();
 
-        const parsed = parseMpesaSms(body);
-        if (!parsed) return;
+    const poll = async () => {
+      const plugin = await loadPlugin();
+      if (!plugin) return;
 
-        // Build partial transaction — no category, user will choose
-        const tx: Omit<Transaction, 'category'> = {
-          id: `sms_${Date.now()}`,
-          amount: parsed.amount ?? 0,
-          type: parsed.type ?? 'sent',
-          name: parsed.name ?? 'Unknown',
-          date: new Date().toISOString(),
-          reference: parsed.reference,
-        };
+      try {
+        const result = await plugin.getSMSList({
+          filter: {
+            address: 'MPESA',
+            minDate: lastCheckedTimestamp.toString(),
+            maxCount: 10,
+          },
+        });
 
-        console.log('[SMS] New M-Pesa transaction detected:', tx.name, tx.amount);
-        onTransaction?.(tx);
-      });
+        const messages = result?.smsList || result?.messages || [];
 
-      return () => listener.remove();
-    } catch (err) {
-      console.error('[SMS] Listener setup failed:', err);
-      return null;
-    }
+        for (const msg of messages) {
+          const body = msg.body || '';
+          const address = msg.address || '';
+          const msgTime = msg.date ? Number(msg.date) : Date.now();
+
+          if (msgTime <= lastCheckedTimestamp) continue;
+          if (!isMpesaMessage(address, body)) continue;
+
+          const parsed = parseMpesaSms(body);
+          if (!parsed) continue;
+
+          const tx: Omit<Transaction, 'category'> = {
+            id: `sms_${msgTime}`,
+            amount: parsed.amount ?? 0,
+            type: parsed.type ?? 'sent',
+            name: parsed.name ?? 'Unknown',
+            date: new Date(msgTime).toISOString(),
+            reference: parsed.reference,
+          };
+
+          console.log('[SMS] New M-Pesa transaction:', tx.name, tx.amount);
+          onTransaction(tx);
+        }
+
+        if (messages.length > 0) {
+          const maxTime = Math.max(...messages.map((m: any) => Number(m.date) || 0));
+          if (maxTime > lastCheckedTimestamp) lastCheckedTimestamp = maxTime;
+        }
+      } catch (err) {
+        console.error('[SMS] Poll failed:', err);
+      }
+    };
+
+    const timer = setInterval(poll, intervalMs);
+    // Run first poll immediately
+    poll();
+
+    return () => clearInterval(timer);
   },
 };
