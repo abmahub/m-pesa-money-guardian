@@ -13,7 +13,7 @@ import AddTransactionModal from '@/components/AddTransactionModal';
 import SmsReceivedPopup from '@/components/SmsReceivedPopup';
 import { shareIntentService } from '@/services/capacitorSms';
 import { requestNotificationPermission } from '@/services/localNotifications';
-import { App } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 
 const Index = () => {
   const [showSplash, setShowSplash] = useState(true);
