@@ -32,6 +32,8 @@ const CATEGORIES = [
   { id: 'Health', icon: '💊', label: 'Health' },
   { id: 'Transfer', icon: '👤', label: 'Transfer' },
   { id: 'Savings', icon: '🏦', label: 'Savings' },
+  { id: 'Fuliza', icon: '💳', label: 'Fuliza' },
+  { id: 'Airtime', icon: '📱', label: 'Airtime' },
   { id: 'Other', icon: '📦', label: 'Other' },
 ];
 
