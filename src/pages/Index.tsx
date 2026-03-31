@@ -87,6 +87,10 @@ const Index = () => {
 
   const handleTransactionAdded = () => setRefreshKey(k => k + 1);
 
+  const handleManualTransaction = useCallback((tx: Omit<Transaction, 'category'>) => {
+    setPendingSmsTransaction(tx);
+  }, []);
+
   if (showSplash) {
     return <SplashScreen onFinish={handleSplashFinish} />;
   }
