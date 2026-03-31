@@ -101,7 +101,7 @@ const Index = () => {
       case 'transactions': return <TransactionsScreen key={refreshKey} />;
       case 'budget': return <BudgetScreen key={refreshKey} />;
       case 'insights': return <InsightsScreen key={refreshKey} />;
-      case 'settings': return <SettingsScreen />;
+      case 'settings': return <SettingsScreen onManualTransaction={handleManualTransaction} />;
     }
   };
 
