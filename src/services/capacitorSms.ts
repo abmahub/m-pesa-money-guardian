@@ -6,22 +6,6 @@ import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
 import { SMSInboxReader, type SMSFilter, MessageType } from 'capacitor-sms-inbox';
 
-/** Open Android app settings so user can manually grant SMS permission */
-async function openAppSettings(): Promise<void> {
-  try {
-    // Use Capacitor's native bridge to open app settings
-    const { App } = await import('@capacitor/app');
-    // Fallback: try native intent via browser
-  } catch {
-    // ignore
-  }
-  // Universal fallback — works in Capacitor WebView
-  try {
-    (window as any).open('app-settings:');
-  } catch {
-    // ignore
-  }
-}
 
 export const smsService = {
   isAvailable(): boolean {
