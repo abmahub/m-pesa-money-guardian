@@ -54,32 +54,17 @@ export const smsService = {
     }
   },
 
-  /** Open Android App Settings for this app */
+  /** Open Android App Settings for this app so user can enable SMS manually */
   async openSettings(): Promise<void> {
+    // Use Capacitor's native bridge if available
     try {
-      // Capacitor native bridge to open settings
-      const { NativeSettings } = await import('capacitor-native-settings').catch(() => ({ NativeSettings: null }));
-      if (NativeSettings) {
-        await NativeSettings.openAndroid({ option: 'application_details' });
-        return;
-      }
-    } catch {
-      // ignore
-    }
-
-    // Fallback: use Capacitor App plugin or direct intent
-    try {
-      // Try using Android intent directly through the WebView
       const w = window as any;
-      if (w.AndroidBridge?.openAppSettings) {
-        w.AndroidBridge.openAppSettings();
+      if (w.Capacitor?.Plugins?.App?.openUrl) {
+        await w.Capacitor.Plugins.App.openUrl({ url: `package:${w.Capacitor?.config?.appId || 'app.lovable.pesaguard'}` });
         return;
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
 
-    // Final fallback — show instruction
     alert('Please open your phone Settings → Apps → PesaGuard → Permissions → SMS → Allow');
   },
 
