@@ -32,10 +32,14 @@ const OnboardingScreen = ({ onComplete }: OnboardingScreenProps) => {
   const handleRequestPermission = async () => {
     setRequesting(true);
     if (smsService.isAvailable()) {
-      // Triggers the REAL Android system permission dialog
-      await smsService.requestPermission();
+      const granted = await smsService.requestPermission();
+      if (!granted) {
+        // If denied, the service already showed instructions/settings.
+        // Wait a moment for user to return, then re-check
+        await new Promise(r => setTimeout(r, 3000));
+        await smsService.checkPermission(); // just re-check silently
+      }
     }
-    // Complete onboarding regardless of permission result
     onComplete();
   };
 
