@@ -14,6 +14,7 @@ import SmsReceivedPopup from '@/components/SmsReceivedPopup';
 import { shareIntentService } from '@/services/capacitorSms';
 import { requestNotificationPermission } from '@/services/localNotifications';
 import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 
 const Index = () => {
   const [showSplash, setShowSplash] = useState(true);
