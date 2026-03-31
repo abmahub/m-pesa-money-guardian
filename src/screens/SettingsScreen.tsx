@@ -1,22 +1,26 @@
 import AppHeader from '@/components/AppHeader';
-import { ChevronRight, Download, Shield, Share2, Bell, Clipboard } from 'lucide-react';
+import { ChevronRight, Download, Shield, Share2, Bell, MessageSquare } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { shareIntentService } from '@/services/capacitorSms';
 import { checkNotificationPermission, requestNotificationPermission } from '@/services/localNotifications';
+import { shareIntentService } from '@/services/capacitorSms';
 import { parseMpesaSms } from '@/services/smsReader';
-import { db } from '@/services/database';
 import { Transaction } from '@/types';
 
-const SettingsScreen = () => {
+interface SettingsScreenProps {
+  onManualTransaction?: (tx: Omit<Transaction, 'category'>) => void;
+}
+
+const SettingsScreen = ({ onManualTransaction }: SettingsScreenProps) => {
   const [notificationStatus, setNotificationStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
-  const [pasteResult, setPasteResult] = useState<string | null>(null);
+  const [messageText, setMessageText] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const checkPermissions = async () => {
-      const notificationsGranted = await checkNotificationPermission();
-      setNotificationStatus(notificationsGranted ? 'granted' : 'unknown');
+    const check = async () => {
+      const granted = await checkNotificationPermission();
+      setNotificationStatus(granted ? 'granted' : 'unknown');
     };
-    checkPermissions();
+    check();
   }, []);
 
   const handleRequestNotifications = async () => {
@@ -24,40 +28,44 @@ const SettingsScreen = () => {
     setNotificationStatus(granted ? 'granted' : 'denied');
   };
 
-  /** Manual paste: user copies an M-Pesa message and taps this button */
-  const handlePasteMessage = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) {
-        setPasteResult('Clipboard is empty. Copy an M-Pesa message first.');
-        setTimeout(() => setPasteResult(null), 3000);
-        return;
-      }
-
-      const parsed = parseMpesaSms(text);
-      if (!parsed || !parsed.amount) {
-        setPasteResult('Not a valid M-Pesa message. Please copy the full message.');
-        setTimeout(() => setPasteResult(null), 4000);
-        return;
-      }
-
-      const tx: Transaction = {
-        id: `paste_${Date.now()}`,
-        amount: parsed.amount,
-        type: parsed.type ?? 'sent',
-        category: parsed.category ?? 'Other',
-        name: parsed.name ?? 'Unknown',
-        date: parsed.date || new Date().toISOString(),
-        reference: parsed.reference,
-      };
-
-      await db.addTransaction(tx);
-      setPasteResult('✓ Transaction added!');
-      setTimeout(() => setPasteResult(null), 3000);
-    } catch {
-      setPasteResult('Could not read clipboard. Please allow clipboard access.');
-      setTimeout(() => setPasteResult(null), 3000);
+  const handleParseMessage = () => {
+    const text = messageText.trim();
+    if (!text) {
+      setError('Please paste an M-Pesa message first.');
+      setTimeout(() => setError(null), 3000);
+      return;
     }
+
+    const parsed = parseMpesaSms(text);
+    if (!parsed || !parsed.amount) {
+      setError('Unsupported message format. Please paste a valid M-Pesa message.');
+      setTimeout(() => setError(null), 4000);
+      return;
+    }
+
+    const tx: Omit<Transaction, 'category'> = {
+      id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      amount: parsed.amount,
+      type: parsed.type ?? 'sent',
+      name: parsed.name ?? 'Unknown',
+      date: parsed.date || new Date().toISOString(),
+      reference: parsed.reference,
+    };
+
+    // Check for duplicates
+    if (shareIntentService.isDuplicate(tx)) {
+      setError('This transaction has already been added.');
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
+    // Trigger the category picker popup
+    if (onManualTransaction) {
+      onManualTransaction(tx);
+    }
+
+    setMessageText('');
+    setError(null);
   };
 
   const handleClearData = () => {
@@ -76,9 +84,36 @@ const SettingsScreen = () => {
         <p className="text-sm text-muted-foreground mt-1">Manage preferences and add transactions</p>
       </div>
 
+      {/* Manual Message Input */}
+      <div className="px-5 mt-6">
+        <p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-3">Paste M-Pesa Message</p>
+        <div className="rounded-2xl bg-card shadow-card overflow-hidden p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            <span className="text-sm font-semibold text-foreground">Add Transaction Manually</span>
+          </div>
+          <textarea
+            value={messageText}
+            onChange={e => setMessageText(e.target.value)}
+            placeholder={"Paste your M-Pesa message here...\n\nExample: SJ12ABC456 Confirmed. Ksh1,500.00 sent to JOHN DOE 0712345678 on 31/3/26..."}
+            className="w-full min-h-[120px] rounded-xl bg-muted/50 border border-border px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+          />
+          {error && (
+            <p className="text-xs text-destructive font-semibold mt-2">{error}</p>
+          )}
+          <button
+            onClick={handleParseMessage}
+            disabled={!messageText.trim()}
+            className="w-full mt-3 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm disabled:opacity-40 transition-opacity"
+          >
+            Process Message
+          </button>
+        </div>
+      </div>
+
       {/* How to Share */}
       <div className="px-5 mt-6">
-        <p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-3">Add Transactions</p>
+        <p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-3">Other Options</p>
         <div className="rounded-2xl bg-card shadow-card overflow-hidden divide-y divide-border">
           <div className="flex items-center gap-3 px-4 py-4">
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -91,18 +126,6 @@ const SettingsScreen = () => {
               </p>
             </div>
           </div>
-          <button onClick={handlePasteMessage} className="flex items-center gap-3 w-full px-4 py-4 text-left">
-            <div className="w-10 h-10 rounded-xl bg-accent flex items-center justify-center">
-              <Clipboard className="w-5 h-5 text-accent-foreground" />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold text-sm text-foreground">Paste M-Pesa Message</p>
-              <p className="text-xs text-muted-foreground">
-                {pasteResult || 'Copy a message, then tap here to add it'}
-              </p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground" />
-          </button>
         </div>
       </div>
 
@@ -153,7 +176,7 @@ const SettingsScreen = () => {
 
       {/* Danger Zone */}
       <div className="px-5 mt-8 mb-4">
-        <button onClick={handleClearData} className="flex items-center justify-center gap-2 w-full text-expense font-semibold text-sm">
+        <button onClick={handleClearData} className="flex items-center justify-center gap-2 w-full text-destructive font-semibold text-sm">
           Clear All Data
         </button>
       </div>

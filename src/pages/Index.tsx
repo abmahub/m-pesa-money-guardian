@@ -87,6 +87,10 @@ const Index = () => {
 
   const handleTransactionAdded = () => setRefreshKey(k => k + 1);
 
+  const handleManualTransaction = useCallback((tx: Omit<Transaction, 'category'>) => {
+    setPendingSmsTransaction(tx);
+  }, []);
+
   if (showSplash) {
     return <SplashScreen onFinish={handleSplashFinish} />;
   }
@@ -101,7 +105,7 @@ const Index = () => {
       case 'transactions': return <TransactionsScreen key={refreshKey} />;
       case 'budget': return <BudgetScreen key={refreshKey} />;
       case 'insights': return <InsightsScreen key={refreshKey} />;
-      case 'settings': return <SettingsScreen />;
+      case 'settings': return <SettingsScreen onManualTransaction={handleManualTransaction} />;
     }
   };
 
