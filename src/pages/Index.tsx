@@ -11,8 +11,10 @@ import OnboardingScreen from '@/screens/OnboardingScreen';
 import SplashScreen from '@/screens/SplashScreen';
 import AddTransactionModal from '@/components/AddTransactionModal';
 import SmsReceivedPopup from '@/components/SmsReceivedPopup';
-import { smsService } from '@/services/capacitorSms';
+import { shareIntentService } from '@/services/capacitorSms';
 import { requestNotificationPermission } from '@/services/localNotifications';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 
 const Index = () => {
   const [showSplash, setShowSplash] = useState(true);
@@ -21,57 +23,60 @@ const Index = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [pendingSmsTransaction, setPendingSmsTransaction] = useState<Omit<Transaction, 'category'> | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   useEffect(() => {
     const done = localStorage.getItem('pesaguard_onboarded');
     if (done === 'true') setOnboarded(true);
   }, []);
 
-  /** Called when a new M-Pesa SMS is detected — shows category picker popup */
-  const handleSmsReceived = useCallback((tx: Omit<Transaction, 'category'>) => {
-    setPendingSmsTransaction(tx);
-  }, []);
-
-  // Initialize real SMS listener on native Android only
-  useEffect(() => {
-    if (!onboarded) return;
-    if (!smsService.isAvailable()) {
-      console.log('[PesaGuard] Running in web preview — SMS features disabled');
+  /** Process shared text from another app */
+  const processSharedText = useCallback((text: string) => {
+    const tx = shareIntentService.parseSharedMessage(text);
+    if (!tx) {
+      setShareError('Unsupported message format. Please share an M-Pesa message.');
+      setTimeout(() => setShareError(null), 4000);
       return;
     }
 
-    let cleanup: (() => void) | null = null;
+    if (shareIntentService.isDuplicate(tx)) {
+      setShareError('This transaction has already been added.');
+      setTimeout(() => setShareError(null), 3000);
+      return;
+    }
 
-    const init = async () => {
-      // Ask Android notification permission for budget alerts
-      const notificationGranted = await requestNotificationPermission();
-      if (!notificationGranted) {
-        console.log('[PesaGuard] Notification permission denied');
+    setPendingSmsTransaction(tx);
+  }, []);
+
+  /** Check for shared intent on startup and when app resumes */
+  useEffect(() => {
+    if (!onboarded) return;
+
+    const checkSharedContent = async () => {
+      const text = await shareIntentService.checkForSharedText();
+      if (text) {
+        processSharedText(text);
       }
-
-      // Request REAL Android system permissions
-      const granted = await smsService.requestPermission();
-      if (!granted) {
-        console.log('[PesaGuard] SMS permission denied');
-        return;
-      }
-
-      // Import existing M-Pesa messages from inbox
-      const imported = await smsService.importExistingMessages();
-      if (imported > 0) {
-        setRefreshKey(k => k + 1);
-        console.log(`[PesaGuard] Imported ${imported} M-Pesa transactions`);
-      }
-
-      // Poll for new incoming SMS — passes to category picker popup
-      cleanup = smsService.startPolling((tx) => {
-        handleSmsReceived(tx);
-      });
     };
 
-    init();
-    return () => { cleanup?.(); };
-  }, [onboarded, handleSmsReceived]);
+    // Check on mount (app opened via share)
+    checkSharedContent();
+
+    // Check when app resumes from background
+    if (shareIntentService.isNative()) {
+      const listener = CapApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) checkSharedContent();
+      });
+
+      return () => { listener.then(l => l.remove()); };
+    }
+  }, [onboarded, processSharedText]);
+
+  // Request notification permission on native
+  useEffect(() => {
+    if (!onboarded || !shareIntentService.isNative()) return;
+    requestNotificationPermission().catch(() => {});
+  }, [onboarded]);
 
   const handleSplashFinish = useCallback(() => setShowSplash(false), []);
 
@@ -106,7 +111,16 @@ const Index = () => {
         {renderScreen()}
       </div>
 
-      {/* M-Pesa SMS Category Picker Popup — only from real device SMS */}
+      {/* Share error toast */}
+      {shareError && (
+        <div className="fixed top-4 left-4 right-4 z-[90] max-w-lg mx-auto animate-fade-in">
+          <div className="bg-destructive text-destructive-foreground px-4 py-3 rounded-2xl text-sm font-semibold text-center shadow-elevated">
+            {shareError}
+          </div>
+        </div>
+      )}
+
+      {/* M-Pesa Shared Message Category Picker */}
       <SmsReceivedPopup
         transaction={pendingSmsTransaction}
         onDismiss={() => setPendingSmsTransaction(null)}

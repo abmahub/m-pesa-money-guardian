@@ -5,15 +5,13 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- SMS Permissions for M-Pesa message reading -->
-    <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-
     <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Internet (for hot-reload during dev) -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- NO SMS permissions needed — we use Share Intent instead -->
 
     <application
         android:allowBackup="true"
@@ -35,17 +33,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Share Intent: Receive text shared from other apps (SMS app) -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
-        <!-- SMS Broadcast Receiver for real-time detection -->
-        <receiver
-            android:name=".SmsReceiver"
+        <!-- SendIntent Activity for handling share intents -->
+        <activity
+            android:name="app.supernotes.sendIntent.SendIntentActivity"
+            android:label="@string/app_name"
             android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            android:theme="@style/AppTheme.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
-        </receiver>
+        </activity>
 
     </application>
 </manifest>

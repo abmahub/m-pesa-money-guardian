@@ -1,183 +1,102 @@
-// Capacitor SMS Reader Service — uses capacitor-sms-inbox plugin
-// Reads real M-Pesa SMS from Android device inbox
+// Share Intent Service — receives M-Pesa SMS shared from the SMS app
+// NO SMS permissions required — uses Android Share Intent
 
 import { Capacitor } from '@capacitor/core';
+import { SendIntent } from '@supernotes/capacitor-send-intent';
 import { Transaction } from '@/types';
-import { parseMpesaSms, isMpesaMessage } from './smsReader';
-import { SMSInboxReader, type SMSFilter, MessageType } from 'capacitor-sms-inbox';
+import { parseMpesaSms } from './smsReader';
 
-
-export const smsService = {
-  isAvailable(): boolean {
-    return Capacitor.getPlatform() === 'android';
+export const shareIntentService = {
+  isNative(): boolean {
+    return Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios';
   },
 
-  async checkPermission(): Promise<boolean> {
-    if (!this.isAvailable()) return false;
-    try {
-      const status = await SMSInboxReader.checkPermissions();
-      return status.sms === 'granted';
-    } catch (err) {
-      console.error('[SMS] Permission check failed:', err);
-      return false;
-    }
-  },
-
-  /** Request SMS permission. If previously denied, opens App Settings. */
-  async requestPermission(): Promise<boolean> {
-    if (!this.isAvailable()) {
-      console.log('[SMS] Not on native Android — SMS unavailable');
-      return false;
-    }
+  /**
+   * Check if the app was opened via a share intent and return the shared text.
+   * Call this on app startup and when app resumes.
+   */
+  async checkForSharedText(): Promise<string | null> {
+    if (!this.isNative()) return null;
 
     try {
-      // Check current state
-      const current = await SMSInboxReader.checkPermissions();
-      if (current.sms === 'granted') return true;
-
-      // Try requesting — Android will show the system dialog if not permanently denied
-      const result = await SMSInboxReader.requestPermissions();
-      console.log('[SMS] Permission result:', result);
-
-      if (result.sms === 'granted') return true;
-
-      // If still denied, the user may have permanently denied it.
-      // Open app settings so they can enable it manually.
-      console.log('[SMS] Permission denied — opening app settings');
-      await this.openSettings();
-      return false;
-    } catch (err) {
-      console.error('[SMS] Permission request failed:', err);
-      // Try opening settings as fallback
-      await this.openSettings();
-      return false;
-    }
-  },
-
-  /** Open Android App Settings for this app so user can enable SMS manually */
-  async openSettings(): Promise<void> {
-    // Use Capacitor's native bridge if available
-    try {
-      const w = window as any;
-      if (w.Capacitor?.Plugins?.App?.openUrl) {
-        await w.Capacitor.Plugins.App.openUrl({ url: `package:${w.Capacitor?.config?.appId || 'app.lovable.pesaguard'}` });
-        return;
+      const result = await SendIntent.checkSendIntentReceived();
+      if (result && result.title) {
+        return result.title;
       }
-    } catch { /* ignore */ }
-
-    alert('Please open your phone Settings → Apps → PesaGuard → Permissions → SMS → Allow');
-  },
-
-  async importExistingMessages(limit = 500): Promise<number> {
-    if (!this.isAvailable()) return 0;
-
-    try {
-      const filter: SMSFilter = {
-        type: MessageType.INBOX,
-        address: 'MPESA',
-        maxCount: limit,
-      };
-
-      const result = await SMSInboxReader.getSMSList({ filter });
-      const messages = result.smsList || [];
-      let imported = 0;
-
-      for (const msg of messages) {
-        const body = msg.body || '';
-        const address = msg.address || '';
-        if (!body || !isMpesaMessage(address, body)) continue;
-
-        const parsed = parseMpesaSms(body);
-        if (!parsed) continue;
-
-        const msgDate = msg.date ? new Date(msg.date) : new Date();
-        const txId = `sms_${msg.date || Date.now()}_${msg.id || imported}`;
-
-        const tx: Transaction = {
-          id: txId,
-          amount: parsed.amount ?? 0,
-          type: parsed.type ?? 'sent',
-          category: parsed.category ?? 'Other',
-          name: parsed.name ?? 'Unknown',
-          date: msgDate.toISOString(),
-          reference: parsed.reference,
-        };
-
-        const existing = localStorage.getItem('pesaguard_transactions');
-        const txns: Transaction[] = existing ? JSON.parse(existing) : [];
-        const isDuplicate = txns.some(t =>
-          t.id === tx.id ||
-          (t.amount === tx.amount && t.name === tx.name && Math.abs(new Date(t.date).getTime() - msgDate.getTime()) < 60000)
-        );
-
-        if (!isDuplicate) {
-          txns.unshift(tx);
-          localStorage.setItem('pesaguard_transactions', JSON.stringify(txns));
-          imported++;
-        }
+      if (result && result.description) {
+        return result.description;
       }
-
-      console.log(`[SMS] Imported ${imported} M-Pesa transactions from inbox`);
-      return imported;
+      if (result && result.url) {
+        return result.url;
+      }
+      return null;
     } catch (err) {
-      console.error('[SMS] Import failed:', err);
-      return 0;
+      console.log('[ShareIntent] No shared content:', err);
+      return null;
     }
   },
 
-  startPolling(onTransaction: (tx: Omit<Transaction, 'category'>) => void, intervalMs = 15000): (() => void) | null {
-    if (!this.isAvailable()) return null;
+  /**
+   * Parse shared text as an M-Pesa message.
+   * Returns a partial transaction (without category) or null if not M-Pesa.
+   */
+  parseSharedMessage(text: string): Omit<Transaction, 'category'> | null {
+    // Check if it contains M-Pesa keywords
+    const mpesaKeywords = ['M-PESA', 'MPESA', 'Ksh', 'sent', 'received', 'paid', 'withdrawn', 'deposited'];
+    const hasKeyword = mpesaKeywords.some(kw => text.toUpperCase().includes(kw.toUpperCase()));
 
-    let lastCheckedTimestamp = Date.now();
+    if (!hasKeyword) return null;
 
-    const poll = async () => {
+    const parsed = parseMpesaSms(text);
+    if (!parsed || !parsed.amount) return null;
+
+    // Try to extract M-Pesa transaction ID (e.g., "SJ12ABC456")
+    const refMatch = text.match(/\b([A-Z0-9]{10})\b/);
+    const reference = parsed.reference || (refMatch ? refMatch[1] : undefined);
+
+    // Try to extract date from SMS
+    const dateMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+    let date = parsed.date || new Date().toISOString();
+    if (dateMatch) {
       try {
-        const filter: SMSFilter = {
-          type: MessageType.INBOX,
-          address: 'MPESA',
-          minDate: lastCheckedTimestamp,
-          maxCount: 10,
-        };
-
-        const result = await SMSInboxReader.getSMSList({ filter });
-        const messages = result.smsList || [];
-
-        for (const msg of messages) {
-          const body = msg.body || '';
-          const address = msg.address || '';
-          const msgTime = msg.date || Date.now();
-
-          if (msgTime <= lastCheckedTimestamp) continue;
-          if (!isMpesaMessage(address, body)) continue;
-
-          const parsed = parseMpesaSms(body);
-          if (!parsed) continue;
-
-          const tx: Omit<Transaction, 'category'> = {
-            id: `sms_${msgTime}`,
-            amount: parsed.amount ?? 0,
-            type: parsed.type ?? 'sent',
-            name: parsed.name ?? 'Unknown',
-            date: new Date(msgTime).toISOString(),
-            reference: parsed.reference,
-          };
-
-          console.log('[SMS] New M-Pesa transaction:', tx.name, tx.amount);
-          onTransaction(tx);
+        const parsedDate = new Date(dateMatch[1]);
+        if (!isNaN(parsedDate.getTime())) {
+          date = parsedDate.toISOString();
         }
+      } catch { /* use default */ }
+    }
 
-        if (messages.length > 0) {
-          const maxTime = Math.max(...messages.map(m => m.date || 0));
-          if (maxTime > lastCheckedTimestamp) lastCheckedTimestamp = maxTime;
-        }
-      } catch (err) {
-        console.error('[SMS] Poll failed:', err);
-      }
+    return {
+      id: `share_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      amount: parsed.amount,
+      type: parsed.type ?? 'sent',
+      name: parsed.name ?? 'Unknown',
+      date,
+      reference,
     };
-
-    const timer = setInterval(poll, intervalMs);
-    poll();
-
-    return () => clearInterval(timer);
   },
+
+  /**
+   * Check if a transaction is a duplicate of an existing one.
+   */
+  isDuplicate(tx: Omit<Transaction, 'category'>): boolean {
+    const existing = localStorage.getItem('pesaguard_transactions');
+    if (!existing) return false;
+
+    const txns: Transaction[] = JSON.parse(existing);
+    return txns.some(t =>
+      t.reference === tx.reference ||
+      (t.amount === tx.amount && t.name === tx.name && Math.abs(new Date(t.date).getTime() - new Date(tx.date).getTime()) < 60000)
+    );
+  },
+};
+
+// Keep backward-compatible export name for existing imports
+export const smsService = {
+  isAvailable: () => shareIntentService.isNative(),
+  checkPermission: async () => true, // No permissions needed
+  requestPermission: async () => true, // No permissions needed
+  openSettings: async () => {},
+  importExistingMessages: async () => 0, // Not applicable
+  startPolling: () => null, // Not applicable
 };
