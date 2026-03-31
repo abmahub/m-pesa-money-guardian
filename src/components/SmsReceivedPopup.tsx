@@ -17,6 +17,9 @@ const typeConfig: Record<string, { icon: typeof ArrowDownLeft; label: string; co
   withdraw: { icon: Banknote, label: 'Withdraw', color: 'text-expense' },
   deposit: { icon: Wallet, label: 'Deposit', color: 'text-income' },
   till: { icon: Store, label: 'Buy Goods', color: 'text-expense' },
+  fuliza: { icon: CreditCard, label: 'Fuliza', color: 'text-expense' },
+  airtime: { icon: CreditCard, label: 'Airtime', color: 'text-expense' },
+  balance: { icon: Wallet, label: 'Balance', color: 'text-muted-foreground' },
 };
 
 const CATEGORIES = [
