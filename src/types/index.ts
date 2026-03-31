@@ -1,7 +1,7 @@
 export interface Transaction {
   id: string;
   amount: number;
-  type: 'sent' | 'received' | 'paybill' | 'withdraw' | 'deposit' | 'till';
+  type: 'sent' | 'received' | 'paybill' | 'withdraw' | 'deposit' | 'till' | 'fuliza' | 'airtime' | 'balance';
   category: string;
   name: string;
   date: string;
