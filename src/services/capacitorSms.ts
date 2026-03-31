@@ -4,22 +4,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
-
-// capacitor-sms-inbox plugin — only works on native Android
-let SmsInbox: any = null;
-
-async function loadPlugin() {
-  if (SmsInbox) return SmsInbox;
-  if (Capacitor.getPlatform() !== 'android') return null;
-  try {
-    const mod = await import('capacitor-sms-inbox');
-    SmsInbox = mod.SmsInbox || mod.default || mod;
-    return SmsInbox;
-  } catch (err) {
-    console.warn('[SMS] capacitor-sms-inbox plugin not available:', err);
-    return null;
-  }
-}
+import { SMSInboxReader, type SMSFilter, MessageType } from 'capacitor-sms-inbox';
 
 export const smsService = {
   /** Check if running on native Android */
@@ -29,36 +14,30 @@ export const smsService = {
 
   /** Check current SMS permission status */
   async checkPermission(): Promise<boolean> {
-    const plugin = await loadPlugin();
-    if (!plugin?.checkPermissions) return false;
+    if (!this.isAvailable()) return false;
     try {
-      const status = await plugin.checkPermissions();
-      return status?.sms === 'granted' || status?.receive === 'granted';
+      const status = await SMSInboxReader.checkPermissions();
+      return status.sms === 'granted';
     } catch (err) {
       console.error('[SMS] Permission check failed:', err);
       return false;
     }
   },
 
-  /** Request Android READ_SMS + RECEIVE_SMS permission */
+  /** Request Android READ_SMS permission — triggers system dialog */
   async requestPermission(): Promise<boolean> {
-    const plugin = await loadPlugin();
-    if (!plugin) {
+    if (!this.isAvailable()) {
       console.log('[SMS] Not on native Android — SMS unavailable');
       return false;
     }
 
     try {
-      // Check if already granted
-      if (plugin.checkPermissions) {
-        const current = await plugin.checkPermissions();
-        if (current?.sms === 'granted') return true;
-      }
+      const current = await SMSInboxReader.checkPermissions();
+      if (current.sms === 'granted') return true;
 
-      // Request permission — triggers Android system dialog
-      const result = await plugin.requestPermissions();
+      const result = await SMSInboxReader.requestPermissions();
       console.log('[SMS] Permission result:', result);
-      return result?.sms === 'granted' || result?.receive === 'granted';
+      return result.sms === 'granted';
     } catch (err) {
       console.error('[SMS] Permission request failed:', err);
       return false;
@@ -67,31 +46,29 @@ export const smsService = {
 
   /** Read existing M-Pesa messages from device inbox and auto-save with parsed category */
   async importExistingMessages(limit = 500): Promise<number> {
-    const plugin = await loadPlugin();
-    if (!plugin) return 0;
+    if (!this.isAvailable()) return 0;
 
     try {
-      // Use getSMSList from capacitor-sms-inbox
-      const result = await plugin.getSMSList({
-        filter: {
-          address: 'MPESA',
-          maxCount: limit,
-        },
-      });
+      const filter: SMSFilter = {
+        type: MessageType.INBOX,
+        address: 'MPESA',
+        maxCount: limit,
+      };
 
-      const messages = result?.smsList || result?.messages || [];
+      const result = await SMSInboxReader.getSMSList({ filter });
+      const messages = result.smsList || [];
       let imported = 0;
 
       for (const msg of messages) {
-        const address = msg.address || msg.creator || '';
         const body = msg.body || '';
+        const address = msg.address || '';
         if (!body || !isMpesaMessage(address, body)) continue;
 
         const parsed = parseMpesaSms(body);
         if (!parsed) continue;
 
-        const msgDate = msg.date ? new Date(Number(msg.date)) : new Date();
-        const txId = `sms_${msg.date || Date.now()}_${imported}`;
+        const msgDate = msg.date ? new Date(msg.date) : new Date();
+        const txId = `sms_${msg.date || Date.now()}_${msg.id || imported}`;
 
         const tx: Transaction = {
           id: txId,
@@ -103,12 +80,12 @@ export const smsService = {
           reference: parsed.reference,
         };
 
-        // Check if already imported
+        // Check for duplicates
         const existing = localStorage.getItem('pesaguard_transactions');
         const txns: Transaction[] = existing ? JSON.parse(existing) : [];
         const isDuplicate = txns.some(t =>
           t.id === tx.id ||
-          (t.amount === tx.amount && t.name === tx.name && t.date === tx.date)
+          (t.amount === tx.amount && t.name === tx.name && Math.abs(new Date(t.date).getTime() - msgDate.getTime()) < 60000)
         );
 
         if (!isDuplicate) {
@@ -126,32 +103,28 @@ export const smsService = {
     }
   },
 
-  /** Poll for new SMS periodically (since capacitor-sms-inbox doesn't have a listener).
-   *  Returns cleanup function. Shows popup for user to categorize. */
+  /** Poll for new SMS periodically. Returns cleanup function. */
   startPolling(onTransaction: (tx: Omit<Transaction, 'category'>) => void, intervalMs = 15000): (() => void) | null {
     if (!this.isAvailable()) return null;
 
     let lastCheckedTimestamp = Date.now();
 
     const poll = async () => {
-      const plugin = await loadPlugin();
-      if (!plugin) return;
-
       try {
-        const result = await plugin.getSMSList({
-          filter: {
-            address: 'MPESA',
-            minDate: lastCheckedTimestamp.toString(),
-            maxCount: 10,
-          },
-        });
+        const filter: SMSFilter = {
+          type: MessageType.INBOX,
+          address: 'MPESA',
+          minDate: lastCheckedTimestamp,
+          maxCount: 10,
+        };
 
-        const messages = result?.smsList || result?.messages || [];
+        const result = await SMSInboxReader.getSMSList({ filter });
+        const messages = result.smsList || [];
 
         for (const msg of messages) {
           const body = msg.body || '';
           const address = msg.address || '';
-          const msgTime = msg.date ? Number(msg.date) : Date.now();
+          const msgTime = msg.date || Date.now();
 
           if (msgTime <= lastCheckedTimestamp) continue;
           if (!isMpesaMessage(address, body)) continue;
@@ -173,7 +146,7 @@ export const smsService = {
         }
 
         if (messages.length > 0) {
-          const maxTime = Math.max(...messages.map((m: any) => Number(m.date) || 0));
+          const maxTime = Math.max(...messages.map(m => m.date || 0));
           if (maxTime > lastCheckedTimestamp) lastCheckedTimestamp = maxTime;
         }
       } catch (err) {
@@ -182,8 +155,7 @@ export const smsService = {
     };
 
     const timer = setInterval(poll, intervalMs);
-    // Run first poll immediately
-    poll();
+    poll(); // First poll immediately
 
     return () => clearInterval(timer);
   },
