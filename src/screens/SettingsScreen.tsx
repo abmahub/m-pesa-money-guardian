@@ -21,12 +21,24 @@ const SettingsScreen = () => {
   }, []);
 
   const handleRequestSms = async () => {
-    if (smsService.isAvailable()) {
-      const granted = await smsService.requestPermission();
-      setSmsStatus(granted ? 'granted' : 'denied');
-    } else {
+    if (!smsService.isAvailable()) {
       setSmsStatus('denied');
+      return;
     }
+
+    // If already denied before, go straight to app settings
+    if (smsStatus === 'denied') {
+      await smsService.openSettings();
+      // Re-check after user returns from settings
+      setTimeout(async () => {
+        const granted = await smsService.checkPermission();
+        setSmsStatus(granted ? 'granted' : 'denied');
+      }, 2000);
+      return;
+    }
+
+    const granted = await smsService.requestPermission();
+    setSmsStatus(granted ? 'granted' : 'denied');
   };
 
   const handleRequestNotifications = async () => {

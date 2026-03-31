@@ -6,13 +6,12 @@ import { Transaction } from '@/types';
 import { parseMpesaSms, isMpesaMessage } from './smsReader';
 import { SMSInboxReader, type SMSFilter, MessageType } from 'capacitor-sms-inbox';
 
+
 export const smsService = {
-  /** Check if running on native Android */
   isAvailable(): boolean {
     return Capacitor.getPlatform() === 'android';
   },
 
-  /** Check current SMS permission status */
   async checkPermission(): Promise<boolean> {
     if (!this.isAvailable()) return false;
     try {
@@ -24,7 +23,7 @@ export const smsService = {
     }
   },
 
-  /** Request Android READ_SMS permission — triggers system dialog */
+  /** Request SMS permission. If previously denied, opens App Settings. */
   async requestPermission(): Promise<boolean> {
     if (!this.isAvailable()) {
       console.log('[SMS] Not on native Android — SMS unavailable');
@@ -32,19 +31,43 @@ export const smsService = {
     }
 
     try {
+      // Check current state
       const current = await SMSInboxReader.checkPermissions();
       if (current.sms === 'granted') return true;
 
+      // Try requesting — Android will show the system dialog if not permanently denied
       const result = await SMSInboxReader.requestPermissions();
       console.log('[SMS] Permission result:', result);
-      return result.sms === 'granted';
+
+      if (result.sms === 'granted') return true;
+
+      // If still denied, the user may have permanently denied it.
+      // Open app settings so they can enable it manually.
+      console.log('[SMS] Permission denied — opening app settings');
+      await this.openSettings();
+      return false;
     } catch (err) {
       console.error('[SMS] Permission request failed:', err);
+      // Try opening settings as fallback
+      await this.openSettings();
       return false;
     }
   },
 
-  /** Read existing M-Pesa messages from device inbox and auto-save with parsed category */
+  /** Open Android App Settings for this app so user can enable SMS manually */
+  async openSettings(): Promise<void> {
+    // Use Capacitor's native bridge if available
+    try {
+      const w = window as any;
+      if (w.Capacitor?.Plugins?.App?.openUrl) {
+        await w.Capacitor.Plugins.App.openUrl({ url: `package:${w.Capacitor?.config?.appId || 'app.lovable.pesaguard'}` });
+        return;
+      }
+    } catch { /* ignore */ }
+
+    alert('Please open your phone Settings → Apps → PesaGuard → Permissions → SMS → Allow');
+  },
+
   async importExistingMessages(limit = 500): Promise<number> {
     if (!this.isAvailable()) return 0;
 
@@ -80,7 +103,6 @@ export const smsService = {
           reference: parsed.reference,
         };
 
-        // Check for duplicates
         const existing = localStorage.getItem('pesaguard_transactions');
         const txns: Transaction[] = existing ? JSON.parse(existing) : [];
         const isDuplicate = txns.some(t =>
@@ -103,7 +125,6 @@ export const smsService = {
     }
   },
 
-  /** Poll for new SMS periodically. Returns cleanup function. */
   startPolling(onTransaction: (tx: Omit<Transaction, 'category'>) => void, intervalMs = 15000): (() => void) | null {
     if (!this.isAvailable()) return null;
 
@@ -155,7 +176,7 @@ export const smsService = {
     };
 
     const timer = setInterval(poll, intervalMs);
-    poll(); // First poll immediately
+    poll();
 
     return () => clearInterval(timer);
   },
